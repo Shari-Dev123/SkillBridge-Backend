@@ -23,11 +23,28 @@ connectDB();
 
 const app = express();
 
+// Allowed origins list
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  process.env.CLIENT_URL, // Vercel frontend URL
+].filter(Boolean);
+
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL,
+  origin: (origin, callback) => {
+    // Postman / server-to-server requests (no origin)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked: ${origin}`));
+    }
+  },
   credentials: true,
 }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -53,7 +70,4 @@ app.use(notFound);
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
-// app.listen(PORT, () => {
-//   console.log(`Server running on port ${PORT}`);
-// });
 export default app;
