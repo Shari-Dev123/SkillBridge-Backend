@@ -23,27 +23,37 @@ connectDB();
 
 const app = express();
 
-// Allowed origins list
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:3000",
-  process.env.CLIENT_URL, // Vercel frontend URL
-].filter(Boolean);
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// Har us origin ko allow karo jo skill-bridge ya localhost ho
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowed =
+    !origin ||                                      // server-to-server / Postman
+    origin.includes("skill-bridge") ||             // koi bhi Vercel preview URL
+    origin.includes("localhost") ||                // local development
+    origin === process.env.CLIENT_URL;             // exact match
 
-// Middleware
-app.use(cors({
-  origin: (origin, callback) => {
-    // Postman / server-to-server requests (no origin)
-    if (!origin) return callback(null, true);
+  if (allowed) {
+    res.setHeader("Access-Control-Allow-Origin", origin || "*");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type,Authorization,X-Requested-With"
+    );
+  }
 
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error(`CORS blocked: ${origin}`));
-    }
-  },
-  credentials: true,
-}));
+  // OPTIONS preflight ka foran jawab do
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
