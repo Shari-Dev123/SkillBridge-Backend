@@ -5,7 +5,7 @@ import {
   updateReportStatus,
   deleteReportedUser,
   checkMyReport,
-} from "../controllers/reportController.js";
+} from "../controllers/Reportcontroller.js";
 import protect from "../middleware/authMiddleware.js";
 
 const router = express.Router();
