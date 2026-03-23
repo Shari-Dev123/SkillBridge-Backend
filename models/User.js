@@ -58,6 +58,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    // ── Admin Warning ─────────────────────────────────────────────────────────
+    warning: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );

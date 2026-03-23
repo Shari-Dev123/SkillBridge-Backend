@@ -2,6 +2,7 @@ import asyncHandler from "express-async-handler";
 import User from "../models/User.js";
 import Seller from "../models/Seller.js";
 import Gig from "../models/Gig.js";
+import Order from "../models/Order.js";
 import { successResponse } from "../utils/helpers.js";
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -102,7 +103,6 @@ const updateSellerProfile = asyncHandler(async (req, res) => {
     throw new Error("Seller profile not found");
   }
 
-  // Only update fields that are present in the request body
   const fields = {
     bio, tagline, username, introVideo,
     skills, languages, hourlyRate,
@@ -114,7 +114,6 @@ const updateSellerProfile = asyncHandler(async (req, res) => {
   }
 
   await sellerProfile.save();
-
   successResponse(res, 200, "Seller profile updated", { sellerProfile });
 });
 
@@ -138,7 +137,6 @@ export const updateAvailability = async (req, res) => {
     if (allowMessages   !== undefined) sellerProfile.availability.allowMessages    = allowMessages;
     if (awayMessage     !== undefined) sellerProfile.availability.awayMessage      = awayMessage;
 
-    // Clear date range and away message when marking as available
     if (isAvailable === true) {
       sellerProfile.availability.unavailableFrom = null;
       sellerProfile.availability.unavailableTo   = null;
@@ -147,7 +145,6 @@ export const updateAvailability = async (req, res) => {
 
     await sellerProfile.save();
 
-    // Show or hide all gigs based on availability
     await Gig.updateMany(
       { sellerId: req.user._id },
       { isActive: isAvailable !== false }
@@ -178,6 +175,114 @@ export const getSellerAvailability = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// @desc    Admin — Get all users with stats
+// @route   GET /api/users/admin/users
+// @access  Private (admin only)
+// ─────────────────────────────────────────────────────────────────────────
+export const adminGetUsers = asyncHandler(async (req, res) => {
+  const { search = "", role = "", page = 1, limit = 12 } = req.query;
+
+  const filter = { role: { $ne: "admin" } };
+  if (role)   filter.role = role;
+  if (search) {
+    filter.$or = [
+      { name:  { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const skip  = (Number(page) - 1) * Number(limit);
+  const total = await User.countDocuments(filter);
+  const users = await User.find(filter)
+    .select("-password")
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(Number(limit));
+
+  // Enrich with seller stats + order counts
+  const enriched = await Promise.all(
+    users.map(async (u) => {
+      const base = u.toObject();
+
+      if (u.role === "seller") {
+        const seller = await Seller.findOne({ userId: u._id }).select(
+          "rating totalReviews completedOrders totalEarnings walletBalance level"
+        );
+        const totalGigs = await Gig.countDocuments({ sellerId: u._id });
+        base.rating        = seller?.rating        || 0;
+        base.totalReviews  = seller?.totalReviews  || 0;
+        base.totalOrders   = seller?.completedOrders || 0;
+        base.totalEarnings = seller?.totalEarnings || 0;
+        base.walletBalance = seller?.walletBalance || 0;
+        base.sellerLevel   = seller?.level         || "new_seller";
+        base.totalGigs     = totalGigs;
+      } else {
+        // buyer
+        const orderCount = await Order.countDocuments({ buyerId: u._id });
+        const spentData  = await Order.aggregate([
+          { $match: { buyerId: u._id, status: "completed" } },
+          { $group: { _id: null, total: { $sum: "$amount" } } },
+        ]);
+        base.totalOrders = orderCount;
+        base.totalSpent  = spentData[0]?.total || 0;
+      }
+
+      return base;
+    })
+  );
+
+  // Counts for header stats
+  const sellerCount = await User.countDocuments({ role: "seller" });
+  const buyerCount  = await User.countDocuments({ role: "buyer"  });
+
+  successResponse(res, 200, "Users fetched", {
+    users: enriched,
+    sellerCount,
+    buyerCount,
+    pagination: {
+      total,
+      page:  Number(page),
+      pages: Math.ceil(total / Number(limit)),
+    },
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// @desc    Admin — Delete a user
+// @route   DELETE /api/users/admin/users/:id
+// @access  Private (admin only)
+// ─────────────────────────────────────────────────────────────────────────
+export const adminDeleteUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) { res.status(404); throw new Error("User not found"); }
+  if (user.role === "admin") { res.status(403); throw new Error("Cannot delete admin"); }
+
+  await User.findByIdAndDelete(req.params.id);
+  // Also remove seller profile if exists
+  await Seller.findOneAndDelete({ userId: req.params.id });
+
+  successResponse(res, 200, "User deleted successfully");
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// @desc    Admin — Send warning to a user
+// @route   PUT /api/users/admin/users/:id/warn
+// @access  Private (admin only)
+// ─────────────────────────────────────────────────────────────────────────
+export const adminWarnUser = asyncHandler(async (req, res) => {
+  const { message } = req.body;
+  if (!message) { res.status(400); throw new Error("Warning message is required"); }
+
+  const user = await User.findById(req.params.id);
+  if (!user) { res.status(404); throw new Error("User not found"); }
+
+  user.warning = message;
+  await user.save();
+
+  successResponse(res, 200, "Warning sent successfully", { warning: user.warning });
+});
 
 export {
   getProfile,
